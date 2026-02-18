@@ -36,5 +36,12 @@ python tools/mimo-extract.py
 ## Examples
 See `examples/` for minimal English samples.
 
+## Acknowledgements
+We rely on the following open-source projects and tools:
+- EasyOCR
+- faster-whisper
+- ffmpeg
+- PyYAML
+
 ## License
 MIT
