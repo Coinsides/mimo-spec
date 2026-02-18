@@ -279,7 +279,7 @@ def walk_inputs():
             yield path
 
 
-if __name__ == "__main__":
+def main():
     # reset asset index for reproducibility
     if os.path.exists(ASSET_INDEX):
         os.remove(ASSET_INDEX)
@@ -288,3 +288,7 @@ if __name__ == "__main__":
         process_file(path)
 
     print("mimo-pack: done")
+
+
+if __name__ == "__main__":
+    main()

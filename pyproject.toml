@@ -1,0 +1,11 @@
+[project]
+name = "mimo-spec"
+version = "0.1.0"
+description = "Spec + tools for MU (.mimo) format"
+readme = "README.md"
+requires-python = ">=3.10"
+
+[project.scripts]
+mimo-pack = "tools.mimo_pack:main"
+mimo-validate = "tools.mimo_validate:main"
+mimo-extract = "tools.mimo_extract:main"

@@ -1,6 +1,5 @@
 PyYAML>=6
-faster-whisper>=1.2.1
-# OCR (temporary, swappable)
-easyocr>=1.7.2
-# Optional for better audio extraction
-ffmpeg
+# Optional (OCR / STT)
+# faster-whisper>=1.2.1
+# easyocr>=1.7.2
+# ffmpeg

@@ -21,11 +21,22 @@ pip install -r requirements.txt
 
 > Note: `ffmpeg` is required for audio extraction. Install it via your OS package manager.
 
+## Dependencies
+- **Minimal**: PyYAML
+- **Optional (OCR / STT)**: EasyOCR, faster-whisper, ffmpeg
+
+## Quickstart (3 lines)
+```bash
+pip install -r requirements.txt
+python tools/mimo_pack.py
+python tools/mimo_extract.py
+```
+
 ## Usage
 ```bash
-python tools/mimo-pack.py
-python tools/mimo-validate.py
-python tools/mimo-extract.py
+python tools/mimo_pack.py
+python tools/mimo_validate.py
+python tools/mimo_extract.py
 ```
 
 ## Output Paths
@@ -34,7 +45,7 @@ python tools/mimo-extract.py
 - Reconstructed output: `C:\Mimo\mimo_data\Test\.mimo_samples\reconstructed`
 
 ## Examples
-See `examples/` for minimal English samples.
+See `examples/` for minimal English samples and reconstructed outputs.
 
 ## Acknowledgements
 We rely on the following open-source projects and tools:
