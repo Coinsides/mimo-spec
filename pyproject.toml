@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "mimo-spec"
 version = "0.1.0"
@@ -5,7 +9,11 @@ description = "Spec + tools for MU (.mimo) format"
 readme = "README.md"
 requires-python = ">=3.10"
 
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["mimo_spec*"]
+
 [project.scripts]
-mimo-pack = "tools.mimo_pack:main"
-mimo-validate = "tools.mimo_validate:main"
-mimo-extract = "tools.mimo_extract:main"
+mimo-pack = "mimo_spec.tools.mimo_pack:main"
+mimo-validate = "mimo_spec.tools.mimo_validate:main"
+mimo-extract = "mimo_spec.tools.mimo_extract:main"

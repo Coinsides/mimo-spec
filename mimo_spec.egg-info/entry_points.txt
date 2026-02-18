@@ -1,0 +1,4 @@
+[console_scripts]
+mimo-extract = mimo_spec.tools.mimo_extract:main
+mimo-pack = mimo_spec.tools.mimo_pack:main
+mimo-validate = mimo_spec.tools.mimo_validate:main
