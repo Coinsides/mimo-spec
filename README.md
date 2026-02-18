@@ -23,6 +23,10 @@ Or use the one-click scripts:
 - `install.ps1`
 - `install.bat`
 
+Compatibility wrappers:
+- `mimo-pack.bat` / `mimo-validate.bat` / `mimo-extract.bat`
+- `mimo-pack.ps1` / `mimo-validate.ps1` / `mimo-extract.ps1`
+
 > Note: `ffmpeg` is required for audio extraction. Install it via your OS package manager.
 
 ## Dependencies
