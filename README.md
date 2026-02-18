@@ -19,6 +19,10 @@ MU is the minimal memory unit used for storage, retrieval, and reconstruction. A
 pip install -r requirements.txt
 ```
 
+Or use the one-click scripts:
+- `install.ps1`
+- `install.bat`
+
 > Note: `ffmpeg` is required for audio extraction. Install it via your OS package manager.
 
 ## Dependencies
