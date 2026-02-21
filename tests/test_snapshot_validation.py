@@ -19,7 +19,9 @@ def _write(tmp_path, obj):
 def test_snapshot_gzb64_ok(tmp_path):
     mimo = {
         "schema_version": "1.1",
-        "id": "mu_test",
+        "mu_id": "mu_test",
+        "content_hash": "sha256:" + "0" * 64,
+        "idempotency": {"mu_key": "sha256:" + "0" * 64},
         "meta": {
             "time": "2026-02-21T00:00:00Z",
             "source": "test",
@@ -30,6 +32,9 @@ def test_snapshot_gzb64_ok(tmp_path):
             "has_struct_data": False,
         },
         "summary": "hi",
+        "links": {"corrects": [], "supersedes": [], "duplicate_of": []},
+        "privacy": {"level": "private", "redact": "none", "pii": [], "share_policy": {"allow_snapshot": True, "allow_pointer": True}},
+        "provenance": {"tool": "test", "tool_version": "0"},
         "pointer": [{"type": "file", "path": __file__, "timestamp": "2026-02-21T00:00:00Z"}],
         "snapshot": {
             "kind": "text",
@@ -49,7 +54,9 @@ def test_snapshot_gzb64_ok(tmp_path):
 def test_snapshot_missing_source_ref(tmp_path):
     mimo = {
         "schema_version": "1.1",
-        "id": "mu_test",
+        "mu_id": "mu_test",
+        "content_hash": "sha256:" + "0" * 64,
+        "idempotency": {"mu_key": "sha256:" + "0" * 64},
         "meta": {
             "time": "2026-02-21T00:00:00Z",
             "source": "test",
@@ -60,6 +67,9 @@ def test_snapshot_missing_source_ref(tmp_path):
             "has_struct_data": False,
         },
         "summary": "hi",
+        "links": {"corrects": [], "supersedes": [], "duplicate_of": []},
+        "privacy": {"level": "private", "redact": "none", "pii": [], "share_policy": {"allow_snapshot": True, "allow_pointer": True}},
+        "provenance": {"tool": "test", "tool_version": "0"},
         "pointer": [{"type": "file", "path": __file__, "timestamp": "2026-02-21T00:00:00Z"}],
         "snapshot": {
             "kind": "text",

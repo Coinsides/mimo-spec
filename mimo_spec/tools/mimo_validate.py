@@ -1,5 +1,6 @@
-import os, sys, gzip, base64
+import os, sys, gzip, base64, json
 import yaml
+import jsonschema
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")
@@ -8,7 +9,20 @@ except Exception:
 
 INPUT_ROOT = r"C:\Mimo\mimo_data\Test\.mimo_samples\mimo"
 
-REQUIRED_TOP = ["schema_version", "id", "meta", "summary", "pointer", "snapshot"]
+REQUIRED_TOP_V1_0 = ["schema_version", "id", "meta", "summary", "pointer", "snapshot"]
+REQUIRED_TOP_V1_1 = [
+    "schema_version",
+    "mu_id",
+    "content_hash",
+    "idempotency",
+    "meta",
+    "summary",
+    "pointer",
+    "snapshot",
+    "links",
+    "privacy",
+    "provenance",
+]
 REQUIRED_META = ["time", "source", "group_id", "order", "span", "has_assets", "has_struct_data"]
 
 # Pointer+Locator v0.1 (new style)
@@ -28,10 +42,24 @@ def validate_file(path):
     except Exception as e:
         return [err("E_YAML", path, f"YAML parse error: {e}")], []
 
+    sv = str(data.get("schema_version") or "")
+
     # required top-level
-    for k in REQUIRED_TOP:
+    required = REQUIRED_TOP_V1_1 if sv == "1.1" else REQUIRED_TOP_V1_0
+    for k in required:
         if k not in data:
             errors.append(err("E_REQUIRED", path, f"Missing: {k}"))
+
+    # v1.1: enforce JSON Schema contract (when present)
+    if sv == "1.1":
+        schema_path = os.path.join(os.path.dirname(__file__), "..", "contracts", "mu_v1_1.schema.json")
+        schema_path = os.path.normpath(schema_path)
+        try:
+            with open(schema_path, "r", encoding="utf-8") as f:
+                schema = json.load(f)
+            jsonschema.validate(instance=data, schema=schema)
+        except Exception as e:
+            errors.append(err("E_SCHEMA", path, f"MU v1.1 schema validation failed: {e}"))
 
     # type checks
     if "meta" in data and not isinstance(data["meta"], dict):
@@ -54,7 +82,6 @@ def validate_file(path):
         warnings.append(err("W_STRUCT", path, "has_struct_data=true but struct_data missing"))
 
         # schema_version strategy (v0.1 tooling still accepts 1.0 and 1.1)
-    sv = data.get("schema_version")
     if sv and str(sv) not in {"1.0", "1.1"}:
         warnings.append(err("W_SCHEMA", path, f"schema_version={sv} (expected 1.0 or 1.1)"))
 

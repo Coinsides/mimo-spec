@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mimo.example/schemas/mu_v1_1.schema.json",
+  "title": "MU (.mimo) v1.1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "mu_id",
+    "content_hash",
+    "idempotency",
+    "meta",
+    "summary",
+    "pointer",
+    "snapshot",
+    "links",
+    "privacy",
+    "provenance"
+  ],
+  "properties": {
+    "schema_version": {"type": "string", "const": "1.1"},
+    "mu_id": {"type": "string"},
+    "content_hash": {"type": "string", "pattern": "^sha256:[0-9a-fA-F]{64}$"},
+    "idempotency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mu_key"],
+      "properties": {
+        "mu_key": {"type": "string", "pattern": "^sha256:[0-9a-fA-F]{64}$"}
+      }
+    },
+    "meta": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["time", "source", "group_id", "order", "span"],
+      "properties": {
+        "time": {"type": "string"},
+        "source": {"type": "string"},
+        "group_id": {"type": "string"},
+        "order": {"type": "string"},
+        "span": {"type": "string"}
+      }
+    },
+    "summary": {"type": "string"},
+    "pointer": {
+      "type": "array",
+      "items": {"type": "object"}
+    },
+    "snapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "codec", "size_bytes", "created_at", "source_ref", "payload"],
+      "properties": {
+        "kind": {"type": "string", "enum": ["text", "web", "audio", "image", "other"]},
+        "codec": {"type": "string", "enum": ["plain", "gz+b64"]},
+        "size_bytes": {"type": "integer", "minimum": 0},
+        "created_at": {"type": "string"},
+        "source_ref": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["uri", "sha256"],
+          "properties": {
+            "uri": {"type": "string"},
+            "sha256": {"type": "string", "pattern": "^sha256:[0-9a-fA-F]{64}$"},
+            "raw_id": {"type": "string"},
+            "asset_id": {"type": "string"}
+          }
+        },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "text": {"type": "string"},
+            "text_gz_b64": {"type": "string"}
+          },
+          "anyOf": [{"required": ["text"]}, {"required": ["text_gz_b64"]}]
+        },
+        "meta": {"type": "object"}
+      }
+    },
+    "links": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "corrects": {"type": "array", "items": {"type": "string"}, "default": []},
+        "supersedes": {"type": "array", "items": {"type": "string"}, "default": []},
+        "duplicate_of": {"type": "array", "items": {"type": "string"}, "default": []}
+      },
+      "required": ["corrects", "supersedes", "duplicate_of"]
+    },
+    "privacy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["level", "redact"],
+      "properties": {
+        "level": {"type": "string", "enum": ["private", "org", "public"]},
+        "redact": {"type": "string", "enum": ["none", "light", "heavy"]},
+        "pii": {"type": "array", "items": {"type": "string"}, "default": []},
+        "share_policy": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "allow_snapshot": {"type": "boolean"},
+            "allow_pointer": {"type": "boolean"}
+          },
+          "default": {}
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["tool", "tool_version"],
+      "properties": {
+        "tool": {"type": "string"},
+        "tool_version": {"type": "string"},
+        "model": {"type": "string"},
+        "prompt_version": {"type": "string"}
+      }
+    },
+    "struct_data": {"type": "object"}
+  }
+}

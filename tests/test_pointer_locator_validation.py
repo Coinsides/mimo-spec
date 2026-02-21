@@ -19,8 +19,10 @@ def _write(tmp_path, obj):
 
 def test_pointer_new_style_ok(tmp_path):
     mimo = {
-        "schema_version": "1.0",
-        "id": "mu_test",
+        "schema_version": "1.1",
+        "mu_id": "mu_test",
+        "content_hash": "sha256:" + "0" * 64,
+        "idempotency": {"mu_key": "sha256:" + "0" * 64},
         "meta": {
             "time": "2026-02-21T00:00:00Z",
             "source": "test",
@@ -31,6 +33,9 @@ def test_pointer_new_style_ok(tmp_path):
             "has_struct_data": False,
         },
         "summary": "hi",
+        "links": {"corrects": [], "supersedes": [], "duplicate_of": []},
+        "privacy": {"level": "private", "redact": "none", "pii": [], "share_policy": {"allow_snapshot": True, "allow_pointer": True}},
+        "provenance": {"tool": "test", "tool_version": "0"},
         "pointer": [
             {
                 "type": "raw",
@@ -56,8 +61,10 @@ def test_pointer_new_style_ok(tmp_path):
 
 def test_pointer_new_style_bad_locator(tmp_path):
     mimo = {
-        "schema_version": "1.0",
-        "id": "mu_test",
+        "schema_version": "1.1",
+        "mu_id": "mu_test",
+        "content_hash": "sha256:" + "0" * 64,
+        "idempotency": {"mu_key": "sha256:" + "0" * 64},
         "meta": {
             "time": "2026-02-21T00:00:00Z",
             "source": "test",
@@ -68,6 +75,9 @@ def test_pointer_new_style_bad_locator(tmp_path):
             "has_struct_data": False,
         },
         "summary": "hi",
+        "links": {"corrects": [], "supersedes": [], "duplicate_of": []},
+        "privacy": {"level": "private", "redact": "none", "pii": [], "share_policy": {"allow_snapshot": True, "allow_pointer": True}},
+        "provenance": {"tool": "test", "tool_version": "0"},
         "pointer": [
             {
                 "type": "raw",
@@ -76,7 +86,15 @@ def test_pointer_new_style_bad_locator(tmp_path):
                 "locator": {"kind": "line_range", "start": 3, "end": 2},
             }
         ],
-        "snapshot_gz_b64": "",
+        "snapshot": {
+            "kind": "text",
+            "codec": "gz+b64",
+            "size_bytes": 2,
+            "created_at": "2026-02-21T00:00:00Z",
+            "source_ref": {"uri": "vault://default/raw/2026/02/21/a.txt", "sha256": "sha256:" + "0" * 64},
+            "payload": {"text_gz_b64": "H4sIAAAAAAAC/8vIBACsKpPYAgAAAA=="},
+            "meta": {},
+        },
     }
     path = _write(tmp_path, mimo)
     errors, warnings = validate_file(path)

@@ -142,49 +142,60 @@ def yaml_quote(s: str) -> str:
 
 
 def write_mimo(mimo_path, schema_version, mu_id, meta, summary, pointer, snapshot_text, struct_data=None):
-    lines = []
-    lines.append(f"schema_version: {schema_version}")
-    lines.append(f"id: {mu_id}")
-    lines.append("meta:")
-    for k, v in meta.items():
-        if isinstance(v, bool):
-            lines.append(f"  {k}: {'true' if v else 'false'}")
-        elif isinstance(v, list):
-            if not v:
-                lines.append(f"  {k}: []")
-            else:
-                lines.append(f"  {k}:")
-                for item in v:
-                    lines.append(f"    - {yaml_quote(str(item))}")
-        else:
-            lines.append(f"  {k}: {yaml_quote(str(v))}")
-    lines.append("summary: |")
-    for ln in summary.splitlines() or [""]:
-        lines.append(f"  {ln}")
-    lines.append("pointer:")
-    lines.append("  - type: file")
-    lines.append(f"    path: {yaml_quote(pointer['path'])}")
-    lines.append(f"    timestamp: {yaml_quote(pointer['timestamp'])}")
-
     # Snapshot v0.1
-    snap = make_snapshot(pointer['path'], "text", snapshot_text)
-    lines.append("snapshot:")
-    lines.append(f"  kind: {yaml_quote(str(snap['kind']))}")
-    lines.append(f"  codec: {yaml_quote(str(snap['codec']))}")
-    lines.append(f"  size_bytes: {int(snap['size_bytes'])}")
-    lines.append(f"  created_at: {yaml_quote(str(snap['created_at']))}")
-    lines.append("  source_ref:")
-    lines.append(f"    uri: {yaml_quote(str(snap['source_ref']['uri']))}")
-    lines.append(f"    sha256: {yaml_quote(str(snap['source_ref']['sha256']))}")
-    lines.append("  payload:")
-    lines.append(f"    text_gz_b64: {yaml_quote(str(snap['payload']['text_gz_b64']))}")
+    snap = make_snapshot(pointer["path"], "text", snapshot_text)
+
+    # MU v1.1: hashes + metadata
+    from .mu_hash import sha256_prefixed, canonical_json
+
+    mu_key_seed = {
+        "pointer": pointer,
+        "group_id": meta.get("group_id"),
+        "order": meta.get("order"),
+        "span": meta.get("span"),
+    }
+    mu_key = sha256_prefixed(canonical_json(mu_key_seed).encode("utf-8"))
+
+    content_seed = {
+        "schema_version": str(schema_version),
+        "summary": summary,
+        "snapshot": {
+            "kind": snap.get("kind"),
+            "codec": snap.get("codec"),
+            "payload": snap.get("payload"),
+        },
+    }
+    content_hash = sha256_prefixed(canonical_json(content_seed).encode("utf-8"))
+
+    mimo = {
+        "schema_version": str(schema_version),
+        "mu_id": mu_id,
+        "content_hash": content_hash,
+        "idempotency": {"mu_key": mu_key},
+        "meta": meta,
+        "summary": summary,
+        "pointer": [pointer],
+        "snapshot": snap,
+        "links": {"corrects": [], "supersedes": [], "duplicate_of": []},
+        "privacy": {
+            "level": "private",
+            "redact": "none",
+            "pii": [],
+            "share_policy": {"allow_snapshot": True, "allow_pointer": True},
+        },
+        "provenance": {
+            "tool": "mimo-pack",
+            "tool_version": "0.1.1",
+            "model": "",
+            "prompt_version": "",
+        },
+    }
+
     if struct_data:
-        lines.append("struct_data:")
-        lines.append(f"  json_gz_b64: {yaml_quote(struct_data['json_gz_b64'])}")
-        lines.append(f"  csv_gz_b64: {yaml_quote(struct_data['csv_gz_b64'])}")
+        mimo["struct_data"] = struct_data
 
     with open(mimo_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines))
+        yaml.safe_dump(mimo, f, allow_unicode=True, sort_keys=False)
 
 
 def process_file(path):
@@ -229,7 +240,7 @@ def process_file(path):
             }
             out_name = f"{os.path.splitext(base)[0]}__{i:02d}.mimo"
             out_path = os.path.join(OUTPUT_ROOT, out_name)
-            write_mimo(out_path, "1.0", mu_id, meta, summary, pointer, chunk)
+            write_mimo(out_path, "1.1", mu_id, meta, summary, pointer, chunk)
         return
 
     # Media assets
