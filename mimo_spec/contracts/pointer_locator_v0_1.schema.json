@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mimo.example/schemas/pointer_locator_v0_1.schema.json",
+  "title": "Pointer + Locator v0.1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["type", "uri", "sha256", "locator"],
+  "properties": {
+    "type": {"type": "string", "enum": ["raw", "asset"]},
+    "uri": {"type": "string"},
+    "sha256": {"type": "string", "pattern": "^sha256:[0-9a-fA-F]{64}$"},
+    "locator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": {"type": "string", "enum": ["line_range", "byte_range", "page_range", "time_range", "bbox"]},
+        "start": {"type": "number"},
+        "end": {"type": "number"},
+        "page": {"type": "integer", "minimum": 0},
+        "page_start": {"type": "integer", "minimum": 0},
+        "page_end": {"type": "integer", "minimum": 0},
+        "x": {"type": "number"},
+        "y": {"type": "number"},
+        "w": {"type": "number"},
+        "h": {"type": "number"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"kind": {"const": "line_range"}}},
+          "then": {
+            "required": ["start", "end"],
+            "properties": {"start": {"type": "integer", "minimum": 1}, "end": {"type": "integer", "minimum": 1}}
+          }
+        },
+        {
+          "if": {"properties": {"kind": {"const": "byte_range"}}},
+          "then": {
+            "required": ["start", "end"],
+            "properties": {"start": {"type": "integer", "minimum": 0}, "end": {"type": "integer", "minimum": 0}}
+          }
+        },
+        {
+          "if": {"properties": {"kind": {"const": "time_range"}}},
+          "then": {
+            "required": ["start", "end"],
+            "properties": {"start": {"type": "number", "minimum": 0}, "end": {"type": "number", "minimum": 0}}
+          }
+        },
+        {
+          "if": {"properties": {"kind": {"const": "page_range"}}},
+          "then": {
+            "anyOf": [
+              {"required": ["page"]},
+              {"required": ["page_start", "page_end"]}
+            ]
+          }
+        },
+        {
+          "if": {"properties": {"kind": {"const": "bbox"}}},
+          "then": {"required": ["x", "y", "w", "h"]}
+        }
+      ]
+    }
+  }
+}

@@ -1,4 +1,5 @@
 PyYAML>=6
+pytest>=8.0.0
 # Optional (OCR / STT)
 # faster-whisper>=1.2.1
 # easyocr>=1.7.2

@@ -40,6 +40,48 @@ def write_text(path, text):
         f.write(text)
 
 
+def _read_lines(pth: str):
+    with open(pth, "r", encoding="utf-8", errors="ignore") as f:
+        return f.readlines()
+
+
+def resolve_pointer_snippet(pointer: dict) -> str | None:
+    """Minimal pointer.resolve() for text evidence.
+
+    Supports:
+    - legacy pointer: {path: <file>, ...} with locator.kind=line_range
+    - new pointer: {uri: file://...} or {uri: <plain path>} with locator.kind=line_range
+
+    Does NOT yet resolve vault:// URIs (handled by memory_system via manifest).
+    """
+    loc = pointer.get("locator")
+    if not isinstance(loc, dict) or loc.get("kind") != "line_range":
+        return None
+    start = loc.get("start")
+    end = loc.get("end")
+    if not isinstance(start, int) or not isinstance(end, int) or start < 1 or end < start:
+        return None
+
+    # pick path
+    pth = pointer.get("path")
+    if not pth:
+        uri = pointer.get("uri")
+        if isinstance(uri, str) and uri.startswith("file://"):
+            pth = uri[len("file://") :]
+        elif isinstance(uri, str) and (uri.startswith("vault://") or uri.startswith("http")):
+            return None
+        else:
+            pth = uri
+
+    if not pth or not isinstance(pth, str) or not os.path.exists(pth):
+        return None
+
+    lines = _read_lines(pth)
+    # slice is 1-indexed inclusive
+    snippet = "".join(lines[start - 1 : end])
+    return snippet
+
+
 def main():
     groups = defaultdict(list)
     index = []
@@ -62,6 +104,7 @@ def main():
         snapshots = []
         summaries = []
         pointers = []
+        snippets = []
         assets_md = []
         struct_json = None
         struct_csv = None
@@ -74,7 +117,15 @@ def main():
             if not filename:
                 filename = meta.get("source_filename")
             summaries.append(data.get("summary", ""))
-            pointers.extend(data.get("pointer", []))
+            ps = data.get("pointer", [])
+            pointers.extend(ps)
+            # Try to resolve text snippets when locator is present (minimal v0.1)
+            if isinstance(ps, list):
+                for p in ps:
+                    if isinstance(p, dict):
+                        snip = resolve_pointer_snippet(p)
+                        if snip:
+                            snippets.append(snip)
 
             snap = data.get("snapshot_gz_b64")
             if snap:
@@ -105,6 +156,11 @@ def main():
         if snapshots:
             out_txt = os.path.join(OUT_ROOT, f"{base}.txt")
             write_text(out_txt, "".join(snapshots))
+
+        # write extracted evidence snippets (if any)
+        if snippets:
+            out_snip = os.path.join(OUT_ROOT, f"{base}.snippets.txt")
+            write_text(out_snip, "\n\n---\n\n".join(snippets))
 
         # write assets description
         if assets_md:

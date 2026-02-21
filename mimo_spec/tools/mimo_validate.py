@@ -11,6 +11,9 @@ INPUT_ROOT = r"C:\Mimo\mimo_data\Test\.mimo_samples\mimo"
 REQUIRED_TOP = ["schema_version", "id", "meta", "summary", "pointer", "snapshot_gz_b64"]
 REQUIRED_META = ["time", "source", "group_id", "order", "span", "has_assets", "has_struct_data"]
 
+# Pointer+Locator v0.1 (new style)
+LOCATOR_KINDS = {"line_range", "byte_range", "page_range", "time_range", "bbox"}
+
 
 def err(code, path, msg):
     return {"code": code, "path": path, "msg": msg}
@@ -55,14 +58,52 @@ def validate_file(path):
     if sv and str(sv) != "1.0":
         warnings.append(err("W_SCHEMA", path, f"schema_version={sv} (expected 1.0)"))
 
-    # pointer minimal fields
+    def _validate_locator(i, loc):
+        if not isinstance(loc, dict):
+            errors.append(err("E_LOCATOR", path, f"pointer[{i}].locator must be dict"))
+            return
+        kind = loc.get("kind")
+        if kind not in LOCATOR_KINDS:
+            errors.append(err("E_LOCATOR", path, f"pointer[{i}].locator.kind invalid: {kind}"))
+            return
+        # kind-specific required fields + sanity
+        if kind in {"line_range", "byte_range", "time_range"}:
+            if "start" not in loc or "end" not in loc:
+                errors.append(err("E_LOCATOR", path, f"pointer[{i}].locator missing start/end"))
+                return
+            try:
+                if float(loc["start"]) > float(loc["end"]):
+                    errors.append(err("E_LOCATOR", path, f"pointer[{i}].locator start>end"))
+            except Exception:
+                errors.append(err("E_LOCATOR", path, f"pointer[{i}].locator start/end not comparable"))
+        elif kind == "page_range":
+            if not ("page" in loc or ("page_start" in loc and "page_end" in loc)):
+                errors.append(err("E_LOCATOR", path, f"pointer[{i}].locator requires page or page_start/page_end"))
+        elif kind == "bbox":
+            for k in ("x", "y", "w", "h"):
+                if k not in loc:
+                    errors.append(err("E_LOCATOR", path, f"pointer[{i}].locator missing {k}"))
+
+    # pointer minimal fields (support legacy + new style)
     if isinstance(data.get("pointer"), list):
         for i, p in enumerate(data["pointer"]):
             if not isinstance(p, dict):
                 errors.append(err("E_POINTER", path, f"pointer[{i}] must be dict"))
                 continue
-            if "type" not in p or "path" not in p or "timestamp" not in p:
-                errors.append(err("E_POINTER", path, f"pointer[{i}] missing type/path/timestamp"))
+
+            # New style: type/uri/sha256/locator
+            if "uri" in p or "locator" in p:
+                for k in ("type", "uri", "sha256", "locator"):
+                    if k not in p:
+                        errors.append(err("E_POINTER", path, f"pointer[{i}] missing {k} (new style)"))
+                _validate_locator(i, p.get("locator"))
+
+            # Legacy style: type/path/timestamp
+            else:
+                if "type" not in p or "path" not in p or "timestamp" not in p:
+                    errors.append(err("E_POINTER", path, f"pointer[{i}] missing type/path/timestamp (legacy style)"))
+                else:
+                    warnings.append(err("W_POINTER_LEGACY", path, f"pointer[{i}] uses legacy fields path/timestamp; prefer uri/sha256/locator"))
 
     return errors, warnings
 
