@@ -3,7 +3,6 @@ from pathlib import Path
 
 import yaml
 
-# Make repo importable without installation
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -17,9 +16,9 @@ def _write(tmp_path, obj):
     return str(p)
 
 
-def test_pointer_new_style_ok(tmp_path):
+def test_snapshot_gzb64_ok(tmp_path):
     mimo = {
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "id": "mu_test",
         "meta": {
             "time": "2026-02-21T00:00:00Z",
@@ -31,20 +30,13 @@ def test_pointer_new_style_ok(tmp_path):
             "has_struct_data": False,
         },
         "summary": "hi",
-        "pointer": [
-            {
-                "type": "raw",
-                "uri": "vault://default/raw/2026/02/21/a.txt",
-                "sha256": "sha256:" + "0" * 64,
-                "locator": {"kind": "line_range", "start": 1, "end": 2},
-            }
-        ],
+        "pointer": [{"type": "file", "path": __file__, "timestamp": "2026-02-21T00:00:00Z"}],
         "snapshot": {
             "kind": "text",
             "codec": "gz+b64",
             "size_bytes": 2,
             "created_at": "2026-02-21T00:00:00Z",
-            "source_ref": {"uri": "vault://default/raw/2026/02/21/a.txt", "sha256": "sha256:" + "0" * 64},
+            "source_ref": {"uri": "file://" + __file__, "sha256": "sha256:" + "0" * 64},
             "payload": {"text_gz_b64": "H4sIAAAAAAAC/8vIBACsKpPYAgAAAA=="},
             "meta": {},
         },
@@ -54,9 +46,9 @@ def test_pointer_new_style_ok(tmp_path):
     assert errors == []
 
 
-def test_pointer_new_style_bad_locator(tmp_path):
+def test_snapshot_missing_source_ref(tmp_path):
     mimo = {
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "id": "mu_test",
         "meta": {
             "time": "2026-02-21T00:00:00Z",
@@ -68,16 +60,15 @@ def test_pointer_new_style_bad_locator(tmp_path):
             "has_struct_data": False,
         },
         "summary": "hi",
-        "pointer": [
-            {
-                "type": "raw",
-                "uri": "vault://default/raw/2026/02/21/a.txt",
-                "sha256": "sha256:" + "0" * 64,
-                "locator": {"kind": "line_range", "start": 3, "end": 2},
-            }
-        ],
-        "snapshot_gz_b64": "",
+        "pointer": [{"type": "file", "path": __file__, "timestamp": "2026-02-21T00:00:00Z"}],
+        "snapshot": {
+            "kind": "text",
+            "codec": "gz+b64",
+            "size_bytes": 2,
+            "created_at": "2026-02-21T00:00:00Z",
+            "payload": {"text_gz_b64": "H4sIAAAAAAAC/8vIBACsKpPYAgAAAA=="},
+        },
     }
     path = _write(tmp_path, mimo)
     errors, warnings = validate_file(path)
-    assert any(e["code"] == "E_LOCATOR" for e in errors)
+    assert any(e["code"] in {"E_SNAPSHOT", "E_REQUIRED"} for e in errors)

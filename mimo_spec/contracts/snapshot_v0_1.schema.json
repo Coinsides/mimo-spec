@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mimo.example/schemas/snapshot_v0_1.schema.json",
+  "title": "Snapshot v0.1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["kind", "codec", "size_bytes", "created_at", "source_ref", "payload"],
+  "properties": {
+    "kind": {"type": "string", "enum": ["text", "web", "audio", "image", "other"]},
+    "codec": {"type": "string", "enum": ["plain", "gz+b64"]},
+    "size_bytes": {"type": "integer", "minimum": 0},
+    "created_at": {"type": "string"},
+    "source_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["uri", "sha256"],
+      "properties": {
+        "uri": {"type": "string"},
+        "sha256": {"type": "string", "pattern": "^sha256:[0-9a-fA-F]{64}$"},
+        "raw_id": {"type": "string"},
+        "asset_id": {"type": "string"}
+      }
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "text": {"type": "string"},
+        "text_gz_b64": {"type": "string"}
+      },
+      "anyOf": [
+        {"required": ["text"]},
+        {"required": ["text_gz_b64"]}
+      ]
+    },
+    "meta": {"type": "object"}
+  }
+}

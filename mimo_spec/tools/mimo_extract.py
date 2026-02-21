@@ -127,9 +127,20 @@ def main():
                         if snip:
                             snippets.append(snip)
 
-            snap = data.get("snapshot_gz_b64")
-            if snap:
-                snapshots.append(b64_gz_decode(snap))
+            # Snapshot v0.1 preferred
+            snap = data.get("snapshot")
+            if isinstance(snap, dict):
+                codec = snap.get("codec")
+                payload = snap.get("payload") if isinstance(snap.get("payload"), dict) else {}
+                if codec == "plain" and isinstance(payload.get("text"), str):
+                    snapshots.append(payload["text"])
+                elif codec == "gz+b64" and isinstance(payload.get("text_gz_b64"), str):
+                    snapshots.append(b64_gz_decode(payload["text_gz_b64"]))
+
+            # Legacy field (deprecated)
+            snap_legacy = data.get("snapshot_gz_b64")
+            if snap_legacy and not snapshots:
+                snapshots.append(b64_gz_decode(snap_legacy))
 
             # struct_data
             if data.get("struct_data"):

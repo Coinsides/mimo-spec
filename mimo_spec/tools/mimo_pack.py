@@ -112,10 +112,27 @@ def write_asset_index(rec):
 
 def make_pointer(path):
     ts = datetime.fromtimestamp(os.path.getmtime(path)).isoformat()
+    # Legacy pointer for now (new pointer+locator will be introduced in P0-1 follow-ups)
     return {
         "type": "file",
         "path": path,
         "timestamp": ts,
+    }
+
+
+def make_snapshot(path: str, kind: str, text: str):
+    # Snapshot v0.1: gzip+base64 payload, rooted by source_ref
+    sha = "sha256:" + sha256_file(path)
+    uri = "file://" + path
+    raw = text.encode("utf-8")
+    return {
+        "kind": kind,
+        "codec": "gz+b64",
+        "size_bytes": len(raw),
+        "created_at": datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
+        "source_ref": {"uri": uri, "sha256": sha},
+        "payload": {"text_gz_b64": gz_b64(text)},
+        "meta": {},
     }
 
 
@@ -124,7 +141,7 @@ def yaml_quote(s: str) -> str:
     return "'" + s.replace("'", "''") + "'"
 
 
-def write_mimo(mimo_path, schema_version, mu_id, meta, summary, pointer, snapshot, struct_data=None):
+def write_mimo(mimo_path, schema_version, mu_id, meta, summary, pointer, snapshot_text, struct_data=None):
     lines = []
     lines.append(f"schema_version: {schema_version}")
     lines.append(f"id: {mu_id}")
@@ -148,7 +165,19 @@ def write_mimo(mimo_path, schema_version, mu_id, meta, summary, pointer, snapsho
     lines.append("  - type: file")
     lines.append(f"    path: {yaml_quote(pointer['path'])}")
     lines.append(f"    timestamp: {yaml_quote(pointer['timestamp'])}")
-    lines.append(f"snapshot_gz_b64: {yaml_quote(gz_b64(snapshot))}")
+
+    # Snapshot v0.1
+    snap = make_snapshot(pointer['path'], "text", snapshot_text)
+    lines.append("snapshot:")
+    lines.append(f"  kind: {yaml_quote(str(snap['kind']))}")
+    lines.append(f"  codec: {yaml_quote(str(snap['codec']))}")
+    lines.append(f"  size_bytes: {int(snap['size_bytes'])}")
+    lines.append(f"  created_at: {yaml_quote(str(snap['created_at']))}")
+    lines.append("  source_ref:")
+    lines.append(f"    uri: {yaml_quote(str(snap['source_ref']['uri']))}")
+    lines.append(f"    sha256: {yaml_quote(str(snap['source_ref']['sha256']))}")
+    lines.append("  payload:")
+    lines.append(f"    text_gz_b64: {yaml_quote(str(snap['payload']['text_gz_b64']))}")
     if struct_data:
         lines.append("struct_data:")
         lines.append(f"  json_gz_b64: {yaml_quote(struct_data['json_gz_b64'])}")

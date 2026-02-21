@@ -1,4 +1,4 @@
-import os, sys
+import os, sys, gzip, base64
 import yaml
 
 try:
@@ -8,7 +8,7 @@ except Exception:
 
 INPUT_ROOT = r"C:\Mimo\mimo_data\Test\.mimo_samples\mimo"
 
-REQUIRED_TOP = ["schema_version", "id", "meta", "summary", "pointer", "snapshot_gz_b64"]
+REQUIRED_TOP = ["schema_version", "id", "meta", "summary", "pointer", "snapshot"]
 REQUIRED_META = ["time", "source", "group_id", "order", "span", "has_assets", "has_struct_data"]
 
 # Pointer+Locator v0.1 (new style)
@@ -53,10 +53,48 @@ def validate_file(path):
     if meta.get("has_struct_data") is True and "struct_data" not in data:
         warnings.append(err("W_STRUCT", path, "has_struct_data=true but struct_data missing"))
 
-    # schema_version strategy
+        # schema_version strategy (v0.1 tooling still accepts 1.0 and 1.1)
     sv = data.get("schema_version")
-    if sv and str(sv) != "1.0":
-        warnings.append(err("W_SCHEMA", path, f"schema_version={sv} (expected 1.0)"))
+    if sv and str(sv) not in {"1.0", "1.1"}:
+        warnings.append(err("W_SCHEMA", path, f"schema_version={sv} (expected 1.0 or 1.1)"))
+
+    # snapshot minimal contract (P0-A / Snapshot v0.1)
+    snap = data.get("snapshot")
+    if isinstance(snap, dict):
+        kind = snap.get("kind")
+        codec = snap.get("codec")
+        if kind not in {"text", "web", "audio", "image", "other"}:
+            errors.append(err("E_SNAPSHOT", path, f"snapshot.kind invalid: {kind}"))
+        if codec not in {"plain", "gz+b64"}:
+            errors.append(err("E_SNAPSHOT", path, f"snapshot.codec invalid: {codec}"))
+
+        # must be rooted
+        src = snap.get("source_ref")
+        if not isinstance(src, dict) or not src.get("sha256") or not src.get("uri"):
+            errors.append(err("E_SNAPSHOT", path, "snapshot.source_ref must include uri + sha256"))
+
+        # payload decodability
+        payload = snap.get("payload")
+        if not isinstance(payload, dict):
+            errors.append(err("E_SNAPSHOT", path, "snapshot.payload must be dict"))
+        else:
+            if codec == "plain":
+                if "text" not in payload or not isinstance(payload.get("text"), str):
+                    errors.append(err("E_SNAPSHOT", path, "snapshot.payload.text required for codec=plain"))
+            if codec == "gz+b64":
+                b64 = payload.get("text_gz_b64")
+                if not isinstance(b64, str):
+                    errors.append(err("E_SNAPSHOT", path, "snapshot.payload.text_gz_b64 required for codec=gz+b64"))
+                else:
+                    try:
+                        raw = gzip.decompress(base64.b64decode(b64.encode("utf-8")))
+                        # 20KB hard cap (can be tuned later)
+                        if len(raw) > 20 * 1024:
+                            errors.append(err("E_SNAPSHOT", path, f"snapshot payload too large: {len(raw)} bytes (cap=20480)"))
+                    except Exception as e:
+                        errors.append(err("E_SNAPSHOT", path, f"snapshot payload not decodable: {e}"))
+    else:
+        errors.append(err("E_REQUIRED", path, "Missing: snapshot"))
 
     def _validate_locator(i, loc):
         if not isinstance(loc, dict):
