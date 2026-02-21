@@ -58,6 +58,8 @@ def validate_file(path):
             with open(schema_path, "r", encoding="utf-8") as f:
                 schema = json.load(f)
             jsonschema.validate(instance=data, schema=schema)
+        except jsonschema.exceptions.ValidationError as e:
+            errors.append(err("E_SCHEMA", path, f"MU v1.1 schema validation failed: {e.message}"))
         except Exception as e:
             errors.append(err("E_SCHEMA", path, f"MU v1.1 schema validation failed: {e}"))
 

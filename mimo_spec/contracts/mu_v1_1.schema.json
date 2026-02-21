@@ -88,6 +88,19 @@
       },
       "required": ["corrects", "supersedes", "duplicate_of"]
     },
+    "tombstone": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target_mu_id", "created_at", "actor", "reason", "scope", "retain_raw"],
+      "properties": {
+        "target_mu_id": {"type": "string"},
+        "created_at": {"type": "string"},
+        "actor": {"type": "string"},
+        "reason": {"type": "string"},
+        "scope": {"type": "string", "enum": ["all", "public_exports_only", "injection_only"]},
+        "retain_raw": {"type": "boolean"}
+      }
+    },
     "privacy": {
       "type": "object",
       "additionalProperties": false,
