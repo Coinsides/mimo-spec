@@ -1,5 +1,7 @@
 import os, hashlib, gzip, base64, json, mimetypes, random, string
-from datetime import datetime
+from datetime import datetime, timezone
+
+import yaml
 
 INPUT_ROOT = r"C:\Mimo\mimo_data\Test\.mimo_samples"
 OUTPUT_ROOT = os.path.join(INPUT_ROOT, "mimo")
@@ -129,7 +131,7 @@ def make_snapshot(path: str, kind: str, text: str):
         "kind": kind,
         "codec": "gz+b64",
         "size_bytes": len(raw),
-        "created_at": datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
+        "created_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         "source_ref": {"uri": uri, "sha256": sha},
         "payload": {"text_gz_b64": gz_b64(text)},
         "meta": {},
@@ -141,11 +143,7 @@ def yaml_quote(s: str) -> str:
     return "'" + s.replace("'", "''") + "'"
 
 
-def write_mimo(mimo_path, schema_version, mu_id, meta, summary, pointer, snapshot_text, struct_data=None):
-    # Snapshot v0.1
-    snap = make_snapshot(pointer["path"], "text", snapshot_text)
-
-    # MU v1.1: hashes + metadata
+def compute_mu_key(pointer: dict, meta: dict) -> str:
     from .mu_hash import sha256_prefixed, canonical_json
 
     mu_key_seed = {
@@ -154,21 +152,54 @@ def write_mimo(mimo_path, schema_version, mu_id, meta, summary, pointer, snapsho
         "order": meta.get("order"),
         "span": meta.get("span"),
     }
-    mu_key = sha256_prefixed(canonical_json(mu_key_seed).encode("utf-8"))
+    return sha256_prefixed(canonical_json(mu_key_seed).encode("utf-8"))
+
+
+def compute_content_hash(schema_version: str, summary: str, snapshot: dict) -> str:
+    from .mu_hash import sha256_prefixed, canonical_json
 
     content_seed = {
         "schema_version": str(schema_version),
         "summary": summary,
         "snapshot": {
-            "kind": snap.get("kind"),
-            "codec": snap.get("codec"),
-            "payload": snap.get("payload"),
+            "kind": snapshot.get("kind"),
+            "codec": snapshot.get("codec"),
+            "payload": snapshot.get("payload"),
         },
     }
-    content_hash = sha256_prefixed(canonical_json(content_seed).encode("utf-8"))
+    return sha256_prefixed(canonical_json(content_seed).encode("utf-8"))
+
+
+def write_mu_v1_1(
+    mimo_path: str,
+    *,
+    meta: dict,
+    pointer: dict,
+    summary: str,
+    snapshot_text: str,
+    struct_data=None,
+    dedup: str = "skip",
+    existing_mu_keys: set[str] | None = None,
+) -> bool:
+    """Write a MU v1.1 file.
+
+    Returns:
+      True  -> written
+      False -> skipped (dedup)
+    """
+    existing_mu_keys = existing_mu_keys or set()
+
+    snap = make_snapshot(pointer["path"], "text", snapshot_text)
+    mu_key = compute_mu_key(pointer, meta)
+
+    if dedup == "skip" and mu_key in existing_mu_keys:
+        return False
+
+    content_hash = compute_content_hash("1.1", summary, snap)
+    mu_id = f"mu_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{rand4()}"
 
     mimo = {
-        "schema_version": str(schema_version),
+        "schema_version": "1.1",
         "mu_id": mu_id,
         "content_hash": content_hash,
         "idempotency": {"mu_key": mu_key},
@@ -197,8 +228,31 @@ def write_mimo(mimo_path, schema_version, mu_id, meta, summary, pointer, snapsho
     with open(mimo_path, "w", encoding="utf-8") as f:
         yaml.safe_dump(mimo, f, allow_unicode=True, sort_keys=False)
 
+    existing_mu_keys.add(mu_key)
+    return True
 
-def process_file(path):
+
+def _existing_mu_keys_in_dir(out_dir: str) -> set[str]:
+    keys: set[str] = set()
+    if not os.path.exists(out_dir):
+        return keys
+    for fn in os.listdir(out_dir):
+        if not fn.endswith(".mimo"):
+            continue
+        pth = os.path.join(out_dir, fn)
+        try:
+            with open(pth, "r", encoding="utf-8", errors="ignore") as f:
+                data = yaml.safe_load(f)
+            if isinstance(data, dict):
+                k = (data.get("idempotency") or {}).get("mu_key")
+                if isinstance(k, str) and k.startswith("sha256:"):
+                    keys.add(k)
+        except Exception:
+            continue
+    return keys
+
+
+def process_file(path, *, dedup: str, existing_mu_keys: set[str]):
     ext = os.path.splitext(path)[1].lower()
     base = os.path.basename(path)
     ts = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -224,7 +278,6 @@ def process_file(path):
         chunks = [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)] or [""]
         total = len(chunks)
         for i, chunk in enumerate(chunks, start=1):
-            mu_id = f"mu_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{rand4()}"
             meta = {
                 "time": ts,
                 "source": "sample",
@@ -240,7 +293,7 @@ def process_file(path):
             }
             out_name = f"{os.path.splitext(base)[0]}__{i:02d}.mimo"
             out_path = os.path.join(OUTPUT_ROOT, out_name)
-            write_mimo(out_path, "1.1", mu_id, meta, summary, pointer, chunk)
+            write_mu_v1_1(out_path, meta=meta, pointer=pointer, summary=summary, snapshot_text=chunk, dedup=dedup, existing_mu_keys=existing_mu_keys)
         return
 
     # Media assets
@@ -290,7 +343,6 @@ def process_file(path):
         }
         write_asset_index(asset_rec)
 
-        mu_id = f"mu_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{rand4()}"
         meta = {
             "time": ts,
             "source": "sample",
@@ -306,7 +358,7 @@ def process_file(path):
         }
         out_name = f"{os.path.splitext(base)[0]}.mimo"
         out_path = os.path.join(OUTPUT_ROOT, out_name)
-        write_mimo(out_path, "1.0", mu_id, meta, text_summary, pointer, "")
+        write_mu_v1_1(out_path, meta=meta, pointer=pointer, summary=text_summary, snapshot_text="", dedup=dedup, existing_mu_keys=existing_mu_keys)
         return
 
 
@@ -319,13 +371,26 @@ def walk_inputs():
             yield path
 
 
-def main():
+def main(argv=None):
+    import argparse
+
+    p = argparse.ArgumentParser(description="mimo-pack: generate MU (.mimo) files")
+    p.add_argument("--dedup", default="skip", choices=["skip", "alias", "versioned"], help="Dedup policy by mu_key")
+    args = p.parse_args(argv)
+
+    if args.dedup != "skip":
+        # We accept the flag but only implement skip in v0.1.
+        print(f"WARN: --dedup={args.dedup} not implemented yet; using skip")
+        args.dedup = "skip"
+
     # reset asset index for reproducibility
     if os.path.exists(ASSET_INDEX):
         os.remove(ASSET_INDEX)
 
+    existing_mu_keys = _existing_mu_keys_in_dir(OUTPUT_ROOT)
+
     for path in walk_inputs():
-        process_file(path)
+        process_file(path, dedup=args.dedup, existing_mu_keys=existing_mu_keys)
 
     print("mimo-pack: done")
 
