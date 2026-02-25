@@ -1,11 +1,23 @@
-import os, gzip, base64, json
-import yaml
+from __future__ import annotations
+
+"""mimo-extract: reconstruct snapshots/assets from .mimo files.
+
+This tool should not assume any fixed directories.
+Pass paths explicitly.
+
+Note: vault:// resolution is intentionally handled by `mimobrain_memory_system`
+(via manifests), not by this repo.
+"""
+
+import argparse
+import base64
+import gzip
+import json
+import os
 from collections import defaultdict
+from pathlib import Path
 
-INPUT_ROOT = r"C:\Mimo\mimo_data\Test\.mimo_samples\mimo"
-OUT_ROOT = r"C:\Mimo\mimo_data\Test\.mimo_samples\reconstructed"
-
-os.makedirs(OUT_ROOT, exist_ok=True)
+import yaml
 
 
 def b64_gz_decode(s: str) -> str:
@@ -13,17 +25,16 @@ def b64_gz_decode(s: str) -> str:
     return gzip.decompress(data).decode("utf-8", errors="ignore")
 
 
-def load_mimo(path):
-    with open(path, "r", encoding="utf-8", errors="ignore") as f:
-        return yaml.safe_load(f)
+def load_mimo(path: str | Path):
+    p = Path(path)
+    return yaml.safe_load(p.read_text(encoding="utf-8", errors="ignore"))
 
 
-def group_key(meta):
-    return meta.get("group_id", "ungrouped")
+def group_key(meta: dict) -> str:
+    return str(meta.get("group_id") or "ungrouped")
 
 
-def order_key(meta):
-    # order like "2/7" or span like "1-5000"
+def order_key(meta: dict) -> int:
     ords = meta.get("order", "1/1")
     try:
         return int(str(ords).split("/")[0])
@@ -35,12 +46,12 @@ def order_key(meta):
             return 0
 
 
-def write_text(path, text):
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(text)
+def write_text(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
 
 
-def _read_lines(pth: str):
+def _read_lines(pth: str) -> list[str]:
     with open(pth, "r", encoding="utf-8", errors="ignore") as f:
         return f.readlines()
 
@@ -52,8 +63,9 @@ def resolve_pointer_snippet(pointer: dict) -> str | None:
     - legacy pointer: {path: <file>, ...} with locator.kind=line_range
     - new pointer: {uri: file://...} or {uri: <plain path>} with locator.kind=line_range
 
-    Does NOT yet resolve vault:// URIs (handled by memory_system via manifest).
+    Does NOT resolve vault:// URIs.
     """
+
     loc = pointer.get("locator")
     if not isinstance(loc, dict) or loc.get("kind") != "line_range":
         return None
@@ -62,7 +74,6 @@ def resolve_pointer_snippet(pointer: dict) -> str | None:
     if not isinstance(start, int) or not isinstance(end, int) or start < 1 or end < start:
         return None
 
-    # pick path
     pth = pointer.get("path")
     if not pth:
         uri = pointer.get("uri")
@@ -77,128 +88,77 @@ def resolve_pointer_snippet(pointer: dict) -> str | None:
         return None
 
     lines = _read_lines(pth)
-    # slice is 1-indexed inclusive
-    snippet = "".join(lines[start - 1 : end])
-    return snippet
+    return "".join(lines[start - 1 : end])
 
 
-def main():
-    groups = defaultdict(list)
-    index = []
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(prog="mimo-extract")
+    ap.add_argument("--in", dest="in_path", required=True, help="Input .mimo directory")
+    ap.add_argument(
+        "--out",
+        dest="out_dir",
+        required=True,
+        help="Output directory for reconstructed artifacts",
+    )
+    ns = ap.parse_args(argv)
 
-    for root, _, files in os.walk(INPUT_ROOT):
-        for fn in files:
-            if not fn.endswith(".mimo"):
-                continue
-            path = os.path.join(root, fn)
-            data = load_mimo(path)
-            meta = data.get("meta", {})
-            gid = group_key(meta)
-            groups[gid].append((path, data))
+    in_path = Path(ns.in_path)
+    out_root = Path(ns.out_dir)
+    out_root.mkdir(parents=True, exist_ok=True)
+
+    groups: dict[str, list[tuple[Path, dict]]] = defaultdict(list)
+
+    for p in sorted(in_path.rglob("*.mimo")):
+        data = load_mimo(p)
+        if not isinstance(data, dict):
+            continue
+        meta = data.get("meta", {}) if isinstance(data.get("meta"), dict) else {}
+        gid = group_key(meta)
+        groups[gid].append((p, data))
+
+    index: list[dict] = []
 
     for gid, items in groups.items():
-        # sort by order/span
-        items.sort(key=lambda x: order_key(x[1].get("meta", {})))
+        items.sort(key=lambda x: order_key(x[1].get("meta", {}) if isinstance(x[1], dict) else {}))
 
-        # reconstruct text snapshots
-        snapshots = []
-        summaries = []
-        pointers = []
-        snippets = []
-        assets_md = []
-        struct_json = None
-        struct_csv = None
+        summaries: list[str] = []
+        pointers: list[dict] = []
+        snippets: list[str] = []
 
-        # filename preference: source_filename -> group_id
         filename = None
-
         for path, data in items:
-            meta = data.get("meta", {})
+            meta = data.get("meta", {}) if isinstance(data.get("meta"), dict) else {}
             if not filename:
                 filename = meta.get("source_filename")
-            summaries.append(data.get("summary", ""))
-            ps = data.get("pointer", [])
-            pointers.extend(ps)
-            # Try to resolve text snippets when locator is present (minimal v0.1)
+            summaries.append(str(data.get("summary") or ""))
+
+            ps = data.get("pointer") or []
             if isinstance(ps, list):
                 for p in ps:
                     if isinstance(p, dict):
-                        snip = resolve_pointer_snippet(p)
-                        if snip:
-                            snippets.append(snip)
-
-            # Snapshot v0.1 preferred
-            snap = data.get("snapshot")
-            if isinstance(snap, dict):
-                codec = snap.get("codec")
-                payload = snap.get("payload") if isinstance(snap.get("payload"), dict) else {}
-                if codec == "plain" and isinstance(payload.get("text"), str):
-                    snapshots.append(payload["text"])
-                elif codec == "gz+b64" and isinstance(payload.get("text_gz_b64"), str):
-                    snapshots.append(b64_gz_decode(payload["text_gz_b64"]))
-
-            # Legacy field (deprecated)
-            snap_legacy = data.get("snapshot_gz_b64")
-            if snap_legacy and not snapshots:
-                snapshots.append(b64_gz_decode(snap_legacy))
-
-            # struct_data
-            if data.get("struct_data"):
-                sd = data["struct_data"]
-                if sd.get("json_gz_b64"):
-                    try:
-                        struct_json = b64_gz_decode(sd["json_gz_b64"])
-                    except Exception:
-                        pass
-                if sd.get("csv_gz_b64"):
-                    try:
-                        struct_csv = b64_gz_decode(sd["csv_gz_b64"])
-                    except Exception:
-                        pass
-
-            # assets (text_summary lives in asset index; here use summary as fallback)
-            if meta.get("has_assets"):
-                assets_md.append(f"- {os.path.basename(path)}: {data.get('summary','')}")
+                        pointers.append(p)
+                        sn = resolve_pointer_snippet(p)
+                        if sn:
+                            snippets.append(sn)
 
         base = filename or gid
-        base = os.path.splitext(base)[0]
+        out_dir = out_root / base
+        out_dir.mkdir(parents=True, exist_ok=True)
 
-        # write reconstructed text
-        if snapshots:
-            out_txt = os.path.join(OUT_ROOT, f"{base}.txt")
-            write_text(out_txt, "".join(snapshots))
+        write_text(out_dir / "summary.txt", "\n\n".join(summaries))
+        write_text(out_dir / "snippets.txt", "\n\n".join(snippets))
+        (out_dir / "pointers.json").write_text(
+            json.dumps(pointers, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
 
-        # write extracted evidence snippets (if any)
-        if snippets:
-            out_snip = os.path.join(OUT_ROOT, f"{base}.snippets.txt")
-            write_text(out_snip, "\n\n---\n\n".join(snippets))
+        index.append({"group_id": gid, "out_dir": str(out_dir)})
 
-        # write assets description
-        if assets_md:
-            out_md = os.path.join(OUT_ROOT, f"{base}.md")
-            write_text(out_md, "# Assets Summary\n" + "\n".join(assets_md))
+    (out_root / "index.json").write_text(
+        json.dumps(index, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
 
-        # write struct_data
-        if struct_json:
-            write_text(os.path.join(OUT_ROOT, f"{base}.json"), struct_json)
-        if struct_csv:
-            write_text(os.path.join(OUT_ROOT, f"{base}.csv"), struct_csv)
-
-        index.append({
-            "group_id": gid,
-            "count": len(items),
-            "out_text": f"{base}.txt" if snapshots else None,
-            "out_assets": f"{base}.md" if assets_md else None,
-            "out_json": f"{base}.json" if struct_json else None,
-            "out_csv": f"{base}.csv" if struct_csv else None,
-        })
-
-    with open(os.path.join(OUT_ROOT, "index.jsonl"), "w", encoding="utf-8") as f:
-        for rec in index:
-            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-
-    print("mimo-extract: done")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

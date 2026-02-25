@@ -108,12 +108,13 @@ def compute_content_hash(*, schema_version: str, summary: str, snapshot: dict) -
 
 def make_snapshot(*, source_uri: str, raw_sha256: str, text: str) -> dict:
     raw = text.encode("utf-8")
+    sha = f"sha256:{raw_sha256}"
     return {
         "kind": "text",
         "codec": "gz+b64",
         "size_bytes": len(raw),
         "created_at": now_iso_z(),
-        "source_ref": {"raw_id": f"sha256:{raw_sha256}", "uri": source_uri},
+        "source_ref": {"uri": source_uri, "sha256": sha, "raw_id": sha},
         "payload": {"text_gz_b64": gz_b64(text)},
         "meta": {},
     }
@@ -252,9 +253,12 @@ def build_mus_for_file(
             "time": now_iso_z(),
             "source": source_kind,
             "group_id": group_id,
-            "order": i + 1,
-            "span": total,
+            "order": f"{i+1}/{total}",
+            "span": f"1-{total}",
             "tags": [],
+            "shared_assets": [],
+            "has_assets": False,
+            "has_struct_data": False,
         }
         if workspace_id:
             meta["workspace_id"] = workspace_id
