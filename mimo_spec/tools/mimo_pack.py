@@ -1,173 +1,150 @@
-import os, hashlib, gzip, base64, json, mimetypes, random, string
+from __future__ import annotations
+
+"""mimo-pack: generate MU (.mimo) files from raw inputs.
+
+v0.2 goals (MVP-aligned):
+- No hardcoded input/output paths.
+- Stable group_id (derived from raw sha256).
+- pointer uses pointer+locator shape (type/uri/sha256/locator).
+- Stable mu_key (derived from raw_sha256 + locator + split).
+
+This tool is intentionally minimal: text-like inputs only (md/txt/html/rtf).
+"""
+
+import argparse
+import base64
+import gzip
+import hashlib
+import json
+from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
 
 import yaml
 
-INPUT_ROOT = r"C:\Mimo\mimo_data\Test\.mimo_samples"
-OUTPUT_ROOT = os.path.join(INPUT_ROOT, "mimo")
-ASSETS_ROOT = os.path.join(INPUT_ROOT, "assets")
-ASSET_INDEX = os.path.join(ASSETS_ROOT, "asset_index.jsonl")
-
-os.makedirs(OUTPUT_ROOT, exist_ok=True)
-os.makedirs(ASSETS_ROOT, exist_ok=True)
-
 TEXT_EXTS = {".md", ".txt", ".html", ".rtf"}
-PDF_EXTS = {".pdf"}
-IMG_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
-AUD_EXTS = {".mp3", ".wav", ".m4a"}
-VID_EXTS = {".mp4", ".mov", ".mkv", ".webm"}
-
-# TEMP tools (can be swapped later)
-USE_EASYOCR = True
-USE_WHISPER = True
-WHISPER_MODEL = "small"  # tiny/base/small/medium/large-v3
-FFMPEG_BIN = "ffmpeg"
 
 
-def sha256_file(path):
+def now_iso_z() -> str:
+    return (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+
+
+def sha256_file_hex(path: Path) -> str:
     h = hashlib.sha256()
-    with open(path, "rb") as f:
+    with path.open("rb") as f:
         for chunk in iter(lambda: f.read(1024 * 1024), b""):
             h.update(chunk)
     return h.hexdigest()
 
 
+def sha256_prefixed(data: bytes) -> str:
+    return "sha256:" + hashlib.sha256(data).hexdigest()
+
+
+def canonical_json(obj: Any) -> str:
+    return json.dumps(obj, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
 def gz_b64(s: str) -> str:
-    data = s.encode("utf-8")
-    comp = gzip.compress(data)
+    comp = gzip.compress(s.encode("utf-8"))
     return base64.b64encode(comp).decode("utf-8")
 
 
-def safe_summary(text: str, limit=400):
+def safe_summary(text: str, limit: int = 400) -> str:
     text = " ".join(text.strip().split())
     return text[:limit]
 
 
-def rand4():
-    return "".join(random.choices(string.ascii_lowercase + string.digits, k=4))
+@dataclass(frozen=True)
+class SplitSpec:
+    strategy: str
+    window: int
 
 
-def load_pdf_text(path):
+def parse_split(s: str) -> SplitSpec:
+    # Expect: line_window:400
+    if not s:
+        raise ValueError("--split is required (e.g. line_window:400)")
+    if ":" not in s:
+        raise ValueError("invalid split, expected line_window:<n>")
+    strat, n = s.split(":", 1)
+    strat = strat.strip()
+    if strat != "line_window":
+        raise ValueError("only split strategy supported in MVP: line_window")
     try:
-        import PyPDF2  # type: ignore
-        reader = PyPDF2.PdfReader(path)
-        parts = []
-        for p in reader.pages[:5]:
-            t = p.extract_text() or ""
-            parts.append(t)
-        return "\n".join(parts)
-    except Exception:
-        return ""
+        window = int(n)
+    except Exception as e:
+        raise ValueError("invalid split window") from e
+    if window <= 0:
+        raise ValueError("split window must be > 0")
+    return SplitSpec(strategy=strat, window=window)
 
 
-def easyocr_text(path):
-    if not USE_EASYOCR:
-        return ""
-    try:
-        import easyocr  # type: ignore
-        reader = easyocr.Reader(["en", "ch_sim"], gpu=False)
-        results = reader.readtext(path, detail=0)
-        return "\n".join(results)
-    except Exception:
-        return ""
+def compute_mu_key(*, raw_sha256: str, locator: dict, split: dict) -> str:
+    seed = canonical_json({"raw_sha256": raw_sha256, "locator": locator, "split": split})
+    return sha256_prefixed(seed.encode("utf-8"))
 
 
-def whisper_transcribe_audio(audio_path):
-    if not USE_WHISPER:
-        return ""
-    try:
-        from faster_whisper import WhisperModel  # type: ignore
-        model = WhisperModel(WHISPER_MODEL, device="cpu", compute_type="int8")
-        segments, _ = model.transcribe(audio_path)
-        text = "".join([seg.text for seg in segments])
-        return text.strip()
-    except Exception:
-        return ""
+def compute_content_hash(*, schema_version: str, summary: str, snapshot: dict) -> str:
+    seed = canonical_json(
+        {
+            "schema_version": schema_version,
+            "summary": summary,
+            "snapshot": {
+                "kind": snapshot.get("kind"),
+                "codec": snapshot.get("codec"),
+                "payload": snapshot.get("payload"),
+            },
+        }
+    )
+    return sha256_prefixed(seed.encode("utf-8"))
 
 
-def extract_audio_from_video(video_path, out_wav):
-    # requires ffmpeg in PATH
-    cmd = f'"{FFMPEG_BIN}" -y -i "{video_path}" -vn -ac 1 -ar 16000 "{out_wav}"'
-    return os.system(cmd) == 0
-
-
-def struct_data_from_table_csv(csv_text):
-    # minimal struct_data for table-like text
-    return {
-        "json_gz_b64": gz_b64(json.dumps({
-            "type": "table",
-            "title": "",
-            "source_pointer": "",
-            "fields": [],
-            "rows": [],
-            "summary": "",
-            "notes": "",
-        }, ensure_ascii=False)),
-        "csv_gz_b64": gz_b64(csv_text)
-    }
-
-
-def write_asset_index(rec):
-    with open(ASSET_INDEX, "a", encoding="utf-8") as f:
-        f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-
-
-def make_pointer(path):
-    ts = datetime.fromtimestamp(os.path.getmtime(path)).isoformat()
-    # Legacy pointer for now (new pointer+locator will be introduced in P0-1 follow-ups)
-    return {
-        "type": "file",
-        "path": path,
-        "timestamp": ts,
-    }
-
-
-def make_snapshot(path: str, kind: str, text: str):
-    # Snapshot v0.1: gzip+base64 payload, rooted by source_ref
-    sha = "sha256:" + sha256_file(path)
-    uri = "file://" + path
+def make_snapshot(*, source_uri: str, raw_sha256: str, text: str) -> dict:
     raw = text.encode("utf-8")
     return {
-        "kind": kind,
+        "kind": "text",
         "codec": "gz+b64",
         "size_bytes": len(raw),
-        "created_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
-        "source_ref": {"uri": uri, "sha256": sha},
+        "created_at": now_iso_z(),
+        "source_ref": {"raw_id": f"sha256:{raw_sha256}", "uri": source_uri},
         "payload": {"text_gz_b64": gz_b64(text)},
         "meta": {},
     }
 
 
-def yaml_quote(s: str) -> str:
-    # use single quotes; escape single quotes by doubling
-    return "'" + s.replace("'", "''") + "'"
+def vault_raw_uri(*, vault_id: str, raw_sha256: str, ext: str) -> str:
+    # Mirror vault_ingest naming: vault://default/raw/YYYY/MM/<sha>.<ext>
+    # We don't try to preserve original filenames.
+    dt = datetime.now(timezone.utc)
+    yyyy = dt.strftime("%Y")
+    mm = dt.strftime("%m")
+    ext = ext.lstrip(".") or "txt"
+    return f"vault://{vault_id}/raw/{yyyy}/{mm}/{raw_sha256}.{ext}"
 
 
-def compute_mu_key(pointer: dict, meta: dict) -> str:
-    from .mu_hash import sha256_prefixed, canonical_json
-
-    mu_key_seed = {
-        "pointer": pointer,
-        "group_id": meta.get("group_id"),
-        "order": meta.get("order"),
-        "span": meta.get("span"),
-    }
-    return sha256_prefixed(canonical_json(mu_key_seed).encode("utf-8"))
+def iter_text_files(in_dir: Path) -> list[Path]:
+    files: list[Path] = []
+    for p in sorted(in_dir.rglob("*")):
+        if p.is_file() and p.suffix.lower() in TEXT_EXTS:
+            files.append(p)
+    return files
 
 
-def compute_content_hash(schema_version: str, summary: str, snapshot: dict) -> str:
-    from .mu_hash import sha256_prefixed, canonical_json
+def read_text_best_effort(path: Path) -> str:
+    return path.read_text(encoding="utf-8", errors="ignore")
 
-    content_seed = {
-        "schema_version": str(schema_version),
-        "summary": summary,
-        "snapshot": {
-            "kind": snapshot.get("kind"),
-            "codec": snapshot.get("codec"),
-            "payload": snapshot.get("payload"),
-        },
-    }
-    return sha256_prefixed(canonical_json(content_seed).encode("utf-8"))
+
+def write_mimo(path: Path, mimo: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8", newline="\n") as f:
+        yaml.safe_dump(mimo, f, allow_unicode=True, sort_keys=False)
 
 
 def write_mu_v1_1(
@@ -181,22 +158,34 @@ def write_mu_v1_1(
     dedup: str = "skip",
     existing_mu_keys: set[str] | None = None,
 ) -> bool:
-    """Write a MU v1.1 file.
+    """Backward-compatible helper used by older tests.
 
-    Returns:
-      True  -> written
-      False -> skipped (dedup)
+    This keeps the public API stable while the CLI evolves.
     """
+
     existing_mu_keys = existing_mu_keys or set()
 
-    snap = make_snapshot(pointer["path"], "text", snapshot_text)
-    mu_key = compute_mu_key(pointer, meta)
+    # legacy pointer may include path/timestamp; normalize if possible
+    raw_path = pointer.get("path") if isinstance(pointer, dict) else None
+    if isinstance(raw_path, str) and raw_path:
+        raw_sha_hex = sha256_file_hex(Path(raw_path))
+        uri = "file:///" + raw_path.replace("\\", "/")
+    else:
+        raw_sha_hex = "0" * 64
+        uri = ""
 
+    # best-effort locator
+    locator = {"kind": "line_range", "start": 1, "end": max(1, len(snapshot_text.splitlines()))}
+    split = {"strategy": "single", "index": 0, "total": 1, "window": 0}
+
+    mu_key = compute_mu_key(raw_sha256=f"sha256:{raw_sha_hex}", locator=locator, split=split)
     if dedup == "skip" and mu_key in existing_mu_keys:
         return False
 
-    content_hash = compute_content_hash("1.1", summary, snap)
-    mu_id = f"mu_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{rand4()}"
+    snap = make_snapshot(source_uri=uri, raw_sha256=raw_sha_hex, text=snapshot_text)
+    content_hash = compute_content_hash(schema_version="1.1", summary=summary, snapshot=snap)
+
+    mu_id = meta.get("mu_id") or f"mu_{raw_sha_hex[:12]}_001"
 
     mimo = {
         "schema_version": "1.1",
@@ -208,192 +197,140 @@ def write_mu_v1_1(
         "pointer": [pointer],
         "snapshot": snap,
         "links": {"corrects": [], "supersedes": [], "duplicate_of": []},
-        "privacy": {
-            "level": "private",
-            "redact": "none",
-            "pii": [],
-            "share_policy": {"allow_snapshot": True, "allow_pointer": True},
-        },
-        "provenance": {
-            "tool": "mimo-pack",
-            "tool_version": "0.1.1",
-            "model": "",
-            "prompt_version": "",
-        },
+        "privacy": {"level": "private", "redact": "none"},
+        "provenance": {"tool": "mimo-pack", "tool_version": "0.2.0"},
     }
 
-    if struct_data:
+    if struct_data is not None:
         mimo["struct_data"] = struct_data
 
-    with open(mimo_path, "w", encoding="utf-8") as f:
-        yaml.safe_dump(mimo, f, allow_unicode=True, sort_keys=False)
-
+    write_mimo(Path(mimo_path), mimo)
     existing_mu_keys.add(mu_key)
     return True
 
 
-def _existing_mu_keys_in_dir(out_dir: str) -> set[str]:
-    keys: set[str] = set()
-    if not os.path.exists(out_dir):
-        return keys
-    for fn in os.listdir(out_dir):
-        if not fn.endswith(".mimo"):
-            continue
-        pth = os.path.join(out_dir, fn)
-        try:
-            with open(pth, "r", encoding="utf-8", errors="ignore") as f:
-                data = yaml.safe_load(f)
-            if isinstance(data, dict):
-                k = (data.get("idempotency") or {}).get("mu_key")
-                if isinstance(k, str) and k.startswith("sha256:"):
-                    keys.add(k)
-        except Exception:
-            continue
-    return keys
+def build_mus_for_file(
+    *,
+    raw_path: Path,
+    out_dir: Path,
+    source_kind: str,
+    workspace_id: str | None,
+    split_spec: SplitSpec,
+    vault_id: str,
+) -> int:
+    text = read_text_best_effort(raw_path)
+    lines = text.splitlines()
 
+    raw_sha_hex = sha256_file_hex(raw_path)
+    raw_sha = f"sha256:{raw_sha_hex}"
 
-def process_file(path, *, dedup: str, existing_mu_keys: set[str]):
-    ext = os.path.splitext(path)[1].lower()
-    base = os.path.basename(path)
-    ts = datetime.now().strftime("%Y-%m-%d %H:%M")
-    group_id = f"grp_{datetime.now().strftime('%Y%m%d')}_01_{rand4()}"
+    # Stable group_id derived from raw sha256
+    group_id = f"grp_{raw_sha_hex[:12]}"
 
-    pointer = make_pointer(path)
+    total = max(1, (len(lines) + split_spec.window - 1) // split_spec.window)
 
-    # Text-like
-    if ext in TEXT_EXTS or ext in PDF_EXTS:
-        text = ""
-        if ext in TEXT_EXTS:
-            with open(path, "r", encoding="utf-8", errors="ignore") as f:
-                text = f.read()
-        elif ext in PDF_EXTS:
-            text = load_pdf_text(path)
+    written = 0
+    for i in range(total):
+        start = i * split_spec.window
+        end = min(len(lines), (i + 1) * split_spec.window)
+        # 1-indexed line numbers in locator
+        locator = {"kind": "line_range", "start": start + 1, "end": end}
+        split = {"strategy": split_spec.strategy, "index": i, "total": total, "window": split_spec.window}
 
-        if not text:
-            text = f"[PDF/文本未解析内容] 文件名: {base}"
-        summary = safe_summary(text)
+        snippet_lines = lines[start:end]
+        snippet = "\n".join(snippet_lines).strip() or "(empty)"
 
-        # split into 5000-char chunks
-        chunk_size = 5000
-        chunks = [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)] or [""]
-        total = len(chunks)
-        for i, chunk in enumerate(chunks, start=1):
-            meta = {
-                "time": ts,
-                "source": "sample",
-                "tags": [],
-                "chains": [],
-                "group_id": group_id,
-                "order": f"{i}/{total}",
-                "span": f"{(i-1)*chunk_size+1}-{min(i*chunk_size, len(text))}",
-                "shared_assets": [],
-                "has_assets": False,
-                "has_struct_data": False,
-                "source_filename": base,
-            }
-            out_name = f"{os.path.splitext(base)[0]}__{i:02d}.mimo"
-            out_path = os.path.join(OUTPUT_ROOT, out_name)
-            write_mu_v1_1(out_path, meta=meta, pointer=pointer, summary=summary, snapshot_text=chunk, dedup=dedup, existing_mu_keys=existing_mu_keys)
-        return
-
-    # Media assets
-    if ext in IMG_EXTS | AUD_EXTS | VID_EXTS:
-        asset_id = "sha256_" + sha256_file(path)
-        mime, _ = mimetypes.guess_type(path)
-        size = os.path.getsize(path)
-
-        ocr_text = ""
-        transcript = ""
-        if ext in IMG_EXTS:
-            ocr_text = easyocr_text(path)
-        elif ext in AUD_EXTS:
-            transcript = whisper_transcribe_audio(path)
-        elif ext in VID_EXTS:
-            tmp_wav = os.path.join(ASSETS_ROOT, f"_tmp_{rand4()}.wav")
-            if extract_audio_from_video(path, tmp_wav):
-                transcript = whisper_transcribe_audio(tmp_wav)
-                try:
-                    os.remove(tmp_wav)
-                except Exception:
-                    pass
-
-        # lightweight descriptions (TEMP): OCR/Transcript + file meta
-        if ext in IMG_EXTS:
-            caption = f"Image file: {base}; size={size} bytes; mime={mime or 'unknown'}."
-            if ocr_text:
-                caption += f" OCR: {safe_summary(ocr_text, 500)}"
-            text_summary = caption
-        elif ext in AUD_EXTS:
-            caption = f"Audio file: {base}; size={size} bytes; mime={mime or 'unknown'}."
-            if transcript:
-                caption += f" Transcript: {safe_summary(transcript, 800)}"
-            text_summary = caption
-        else:
-            caption = f"Video file: {base}; size={size} bytes; mime={mime or 'unknown'}."
-            if transcript:
-                caption += f" Transcript: {safe_summary(transcript, 800)}"
-            text_summary = caption
-
-        asset_rec = {
-            "asset_id": asset_id,
-            "type": "image" if ext in IMG_EXTS else ("audio" if ext in AUD_EXTS else "video"),
-            "path": path,
-            "meta": {"size_bytes": size, "mime": mime or "unknown", "ext": ext},
-            "text_summary": text_summary,
+        uri = vault_raw_uri(vault_id=vault_id, raw_sha256=raw_sha_hex, ext=raw_path.suffix)
+        pointer = {
+            "type": "raw",
+            "uri": uri,
+            "sha256": raw_sha,
+            "locator": locator,
         }
-        write_asset_index(asset_rec)
 
-        meta = {
-            "time": ts,
-            "source": "sample",
-            "tags": [],
-            "chains": [],
+        meta: dict[str, Any] = {
+            "time": now_iso_z(),
+            "source": source_kind,
             "group_id": group_id,
-            "order": "1/1",
-            "span": "1-1",
-            "shared_assets": [asset_id],
-            "has_assets": True,
-            "has_struct_data": False,
-            "source_filename": base,
+            "order": i + 1,
+            "span": total,
+            "tags": [],
         }
-        out_name = f"{os.path.splitext(base)[0]}.mimo"
-        out_path = os.path.join(OUTPUT_ROOT, out_name)
-        write_mu_v1_1(out_path, meta=meta, pointer=pointer, summary=text_summary, snapshot_text="", dedup=dedup, existing_mu_keys=existing_mu_keys)
-        return
+        if workspace_id:
+            meta["workspace_id"] = workspace_id
+            meta["tags"].append(f"ws:{workspace_id}")
+
+        mu_key = compute_mu_key(raw_sha256=raw_sha, locator=locator, split=split)
+        snap = make_snapshot(source_uri=uri, raw_sha256=raw_sha_hex, text=snippet)
+
+        summary = safe_summary(snippet)
+        content_hash = compute_content_hash(schema_version="1.1", summary=summary, snapshot=snap)
+
+        mu_id = f"mu_{group_id}_{i+1:03d}"
+        mimo = {
+            "schema_version": "1.1",
+            "mu_id": mu_id,
+            "content_hash": content_hash,
+            "idempotency": {"mu_key": mu_key},
+            "meta": meta,
+            "summary": summary,
+            "pointer": [pointer],
+            "snapshot": snap,
+            "links": {"corrects": [], "supersedes": [], "duplicate_of": []},
+            "privacy": {"level": "private", "redact": "none"},
+            "provenance": {
+                "tool": "mimo-pack",
+                "tool_version": "0.2.0",
+                "model": "",
+                "prompt_version": "",
+            },
+        }
+
+        out_path = out_dir / f"{mu_id}.mimo"
+        write_mimo(out_path, mimo)
+        written += 1
+
+    return written
 
 
-def walk_inputs():
-    for root, _, files in os.walk(INPUT_ROOT):
-        if root.endswith("\\mimo") or root.endswith("\\assets"):
-            continue
-        for fn in files:
-            path = os.path.join(root, fn)
-            yield path
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(prog="mimo-pack", description="Generate MU (.mimo) from raw inputs")
+    ap.add_argument("--in", dest="in_dir", required=True, help="Input directory containing raw files")
+    ap.add_argument("--out", dest="out_dir", required=True, help="Output directory for .mimo files")
+    ap.add_argument("--source", default="file", choices=["chat", "file", "web", "pdf"], help="meta.source")
+    ap.add_argument("--workspace", default=None, help="workspace_id (also adds tag ws:<id>)")
+    ap.add_argument("--split", required=True, help="split strategy, e.g. line_window:400")
+    ap.add_argument("--vault-id", default="default", help="vault id used in vault:// URIs")
+    ap.add_argument("--dedup", default="skip", choices=["skip"], help="(MVP) dedup policy")
 
+    ns = ap.parse_args(argv)
 
-def main(argv=None):
-    import argparse
+    in_dir = Path(ns.in_dir)
+    out_dir = Path(ns.out_dir)
+    if not in_dir.exists():
+        raise SystemExit(f"missing input: {in_dir}")
 
-    p = argparse.ArgumentParser(description="mimo-pack: generate MU (.mimo) files")
-    p.add_argument("--dedup", default="skip", choices=["skip", "alias", "versioned"], help="Dedup policy by mu_key")
-    args = p.parse_args(argv)
+    split_spec = parse_split(ns.split)
 
-    if args.dedup != "skip":
-        # We accept the flag but only implement skip in v0.1.
-        print(f"WARN: --dedup={args.dedup} not implemented yet; using skip")
-        args.dedup = "skip"
+    files = iter_text_files(in_dir)
+    if not files:
+        print("no supported input files")
+        return 0
 
-    # reset asset index for reproducibility
-    if os.path.exists(ASSET_INDEX):
-        os.remove(ASSET_INDEX)
+    total_written = 0
+    for f in files:
+        total_written += build_mus_for_file(
+            raw_path=f,
+            out_dir=out_dir,
+            source_kind=ns.source,
+            workspace_id=ns.workspace,
+            split_spec=split_spec,
+            vault_id=ns.vault_id,
+        )
 
-    existing_mu_keys = _existing_mu_keys_in_dir(OUTPUT_ROOT)
-
-    for path in walk_inputs():
-        process_file(path, dedup=args.dedup, existing_mu_keys=existing_mu_keys)
-
-    print("mimo-pack: done")
+    print(f"written_mus={total_written}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

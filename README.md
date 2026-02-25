@@ -48,9 +48,15 @@ mimo-extract
 ```
 
 ## Output Paths
-- Generated `.mimo`: `C:\Mimo\mimo_data\Test\.mimo_samples\mimo`
-- Assets index: `C:\Mimo\mimo_data\Test\.mimo_samples\assets\asset_index.jsonl`
-- Reconstructed output: `C:\Mimo\mimo_data\Test\.mimo_samples\reconstructed`
+
+This repo does **not** assume any fixed directories.
+
+Typical local layout (example only):
+- `C:\memobrain\raw_inbox\...` (raw inputs)
+- `C:\memobrain\data\memory_system\staging\mu_out\...` (generated `.mimo` staging)
+- `C:\memobrain\data\memory_system\vaults\default\...` (vault assets)
+
+Pass paths explicitly via CLI flags (`--in/--out`).
 
 ## Examples
 See `examples/` for minimal English samples and reconstructed outputs.
