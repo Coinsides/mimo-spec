@@ -13,6 +13,11 @@ requires-python = ">=3.10"
 where = ["."]
 include = ["mimo_spec*"]
 
+[tool.setuptools.package-data]
+# Include JSON schemas in built distributions so downstream repos (CI/runtime)
+# can load contracts from the installed package.
+mimo_spec = ["contracts/*.json"]
+
 [project.scripts]
 mimo-pack = "mimo_spec.tools.mimo_pack:main"
 mimo-validate = "mimo_spec.tools.mimo_validate:main"
