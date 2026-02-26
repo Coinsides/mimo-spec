@@ -215,7 +215,6 @@ def build_mus_for_file(
     raw_path: Path,
     out_dir: Path,
     source_kind: str,
-    workspace_id: str | None,
     split_spec: SplitSpec,
     vault_id: str,
 ) -> int:
@@ -260,9 +259,8 @@ def build_mus_for_file(
             "has_assets": False,
             "has_struct_data": False,
         }
-        if workspace_id:
-            meta["workspace_id"] = workspace_id
-            meta["tags"].append(f"ws:{workspace_id}")
+        # NOTE: workspace/project scoping must NOT be stored inside MU.
+        # It is represented by a local membership layer (relationship table/event log).
 
         mu_key = compute_mu_key(raw_sha256=raw_sha, locator=locator, split=split)
         snap = make_snapshot(source_uri=uri, raw_sha256=raw_sha_hex, text=snippet)
@@ -302,7 +300,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--in", dest="in_dir", required=True, help="Input directory containing raw files")
     ap.add_argument("--out", dest="out_dir", required=True, help="Output directory for .mimo files")
     ap.add_argument("--source", default="file", choices=["chat", "file", "web", "pdf"], help="meta.source")
-    ap.add_argument("--workspace", default=None, help="workspace_id (also adds tag ws:<id>)")
+    # NOTE: do NOT accept --workspace here. Workspace scoping lives in a separate membership layer.
     ap.add_argument("--split", required=True, help="split strategy, e.g. line_window:400")
     ap.add_argument("--vault-id", default="default", help="vault id used in vault:// URIs")
     ap.add_argument("--dedup", default="skip", choices=["skip"], help="(MVP) dedup policy")
@@ -327,7 +325,6 @@ def main(argv: list[str] | None = None) -> int:
             raw_path=f,
             out_dir=out_dir,
             source_kind=ns.source,
-            workspace_id=ns.workspace,
             split_spec=split_spec,
             vault_id=ns.vault_id,
         )
